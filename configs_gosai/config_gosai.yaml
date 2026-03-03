@@ -1,0 +1,167 @@
+defaults:
+  - _self_
+  - /callbacks: [checkpoint_every_n_steps, checkpoint_monitor, learning_rate_monitor]
+  - /model: dnaconv
+  - /strategy: ddp
+  - /noise: loglinear
+  - /lr_scheduler: constant_warmup
+
+model:
+  length: 80
+
+architecture: flow
+mode: train
+diffusion: absorbing_state
+backbone: cnn
+parameterization: subs
+time_conditioning: False
+T: 0
+subs_masking: False
+debug_mode: False
+min_mask_ratio: 0.3
+base_path: /home/ubuntu
+learning_rate: 1e-4
+num_epochs: 5000 #1000
+batch_size: 1
+num_accum_steps: 4
+truncate_kl: false
+gumbel_temp: 1.0
+name: debug
+gradnorm_clip: 1.0
+truncate_steps: 10
+total_num_steps: 4 
+copy_flag_temp: null
+save_every_n_epochs: 50
+alpha: 0.001
+alpha_schedule_warmup: 0
+model_channel: 64
+gumbel: False
+exact_divergence: True
+mask_idx: 4
+rollout_times: 1
+diffu_sample_steps: 128
+adv: gae
+dna: enhancer
+
+seed: 1
+
+fm:
+  dim: 200  #seqs length
+  hidden_dim: 128
+  time_feat_dim: 1
+  project_to_simplex: true
+  vocab_size: 4
+  num_layers: 6
+  scheduler_type: square
+  learning_rate: 1e-2
+  num_timesteps: 1024 
+
+data:
+  streaming: False
+  root_dir: /home/ubuntu/mdlm
+
+loader:
+  global_batch_size: 8
+  eval_global_batch_size: 2      #${.global_batch_size}
+  # Note: batch_size and eval_batch_size are **per machine**
+  batch_size: 8 #${div_up:${.global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
+  eval_batch_size: 8 # ${div_up:${.eval_global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
+  num_workers: 1 #${eval:"len(__import__('os').sched_getaffinity(0))"}
+  pin_memory: True
+
+sampling:
+  predictor: ddpm
+  steps: 32 
+  noise_removal: True
+  num_sample_batches: 2  # Total samples: `num_gpus` * `loader.eval_batch_size` * num_sample_batches
+  num_sample_log: 2
+  semi_ar: False
+  stride_length: 1
+  num_strides: 1
+  num_iterations: 1 
+  mask_ratio: 0.5
+  iteration: 1   
+  eps : 1e-5
+  gumbel: True
+
+
+training:
+  ema: 0.9999
+  antithetic_sampling: True
+  importance_sampling: False
+  sampling_eps: 1e-3
+  change_of_variables: False
+
+eval:
+  checkpoint_path: ''  # Used to evaluate a checkpoint after training.
+  disable_ema: False
+  compute_generative_perplexity: True
+  perplexity_batch_size: 8
+  compute_perplexity_on_sanity: False
+  gen_ppl_eval_model_name_or_path: gpt2-large  # gpt2-large, meta-llama/Llama-2-7b-hf
+  generate_samples: True
+  subset_size: 5000
+
+optim:
+  weight_decay: 0
+  lr: 3e-4
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+
+trainer:
+  _target_: lightning.Trainer
+  accelerator: cuda
+  num_nodes: 1
+  devices: 1
+  accumulate_grad_batches: 4 #${div_up:${loader.global_batch_size}, ${eval:${trainer.devices} * ${loader.batch_size} * ${trainer.num_nodes}}}
+  gradient_clip_val: 1.0
+  precision: 'bf16'
+  num_sanity_val_steps: 2
+  max_steps: 131500
+  log_every_n_steps: 10
+  limit_train_batches: 1.0   # train on full dataset, can be used to toggle quick run
+  limit_val_batches: 0.0025     
+  val_check_interval: 10000
+  default_root_dir: ./lightning_logs  
+  enable_checkpointing: true           
+  enable_model_summary: true           
+  strategy:
+    _target_: lightning.pytorch.strategies.DDPStrategy
+    find_unused_parameters: true
+
+wandb:
+  project: gosai-dna
+  notes: null
+  group: null
+  job_type: null
+  name: null
+  id: ${uuid:}
+  tags:
+    - ${noise.type}
+
+hydra:
+  run:
+    dir: /home/ubuntu/outputs_gosai/${now:%Y.%m.%d}/${now:%H%M%S}
+  job:
+    chdir: true
+
+checkpointing:
+  # Use custom `save_dir` if, e.g., saving to S3 bucket, otherwise leave this parameter as is
+  save_dir: ${cwd:}
+  # Note: `checkpoints` path should correspond to `checkpoint_every_n_steps.dirpath`
+  resume_from_ckpt: true
+  resume_ckpt_path: ${.save_dir}/checkpoints/last.ckpt
+  monitor: val/loss
+
+finetuning:
+  gumbel_softmax_temp: 1.0
+  truncate_steps: 3
+
+validation:
+  enabled: true
+  every_n_epochs: 50
+  use_first_batch_only: true
+  log_to_wandb: true
+  _steps: 100
+
